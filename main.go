@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	p2pgrpc "github.com/birros/go-libp2p-grpc"
 	"google.golang.org/grpc"
@@ -164,23 +165,27 @@ func main() {
 			log.Fatal(err)
 			os.Exit(1)
 		}
+		log.Info("Connected to all peers")
 	}
 	select {}
 }
 
 func connectToPeers(h host.Host, ctx context.Context, pls *bufio.Scanner) error {
+	time.Sleep(20 * time.Second)
 	pls.Split(bufio.ScanLines)
 	for pls.Scan() {
 		ma, err := multiaddr.NewMultiaddr(pls.Text())
 		if err != nil {
 			return nil
 		}
-		peer, err := peer.AddrInfosFromP2pAddrs(ma)
+		p, err := peer.AddrInfosFromP2pAddrs(ma)
 		if err != nil {
 			return nil
 		}
-		if err := h.Connect(ctx, peer[0]); err != nil {
-			return err
+		if p[0].ID != h.ID() {
+			if err := h.Connect(ctx, p[0]); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -199,7 +204,6 @@ func loadPrivateKey(path string) (crypto.PrivKey, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	return crypto.UnmarshalPrivateKey(data)
 }
 
