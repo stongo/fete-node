@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"crypto/rand"
 	"flag"
 	"fmt"
 	"os"
@@ -10,8 +12,10 @@ import (
 	"google.golang.org/grpc"
 
 	libp2p "github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p-core/protocol"
 	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/stongo/fetenode/common"
@@ -21,46 +25,47 @@ const pid protocol.ID = "/grpc/1.0.0"
 
 func main() {
 	c := &config{}
-	flag.StringVar(&c.RendezvousString, "rendezvous", "meetme", "Unique string to identify group of nodes. Share this with your friends to let them connect with you")
+	log := common.Logger
 	flag.StringVar(&c.ListenHost, "host", "0.0.0.0", "The bootstrap node host listen address\n")
-	flag.StringVar(&c.ProtocolID, "pid", "/chat/1.1.0", "Sets a protocol id for stream headers")
-	flag.StringVar(&c.PeerKeyPath, "key-path", "", "private key path")
+	flag.IntVar(&c.ListenPort, "port", 4001, "Node listen port")
+	flag.StringVar(&c.PeerKeyPath, "key-path", "", "Private key path")
+	flag.StringVar(&c.PeerList, "peer-list", "", "Path to file containing peer multiaddrs")
 	flag.StringVar(&c.Repo, "repo", "", "Sets a protocol id for stream headers")
-	flag.IntVar(&c.ListenPort, "port", 4001, "node listen port")
 	flag.Parse()
 
 	repo := c.Repo
 	if repo == "" {
 		hd, err := os.UserHomeDir()
 		if err != nil {
-			common.Logger.Fatalf("problem getting home dir: %s", err)
+			log.Fatalf("problem getting home dir: %s", err)
 			os.Exit(1)
 		}
 		repo = hd + "/.fetenode"
-		common.Logger.Info("creating repo", repo)
+		log.Info("creating repo", repo)
+		// TODO: better error handling
 		if err = os.Mkdir(repo, 0700); err != nil && os.IsNotExist(err) {
-			common.Logger.Warn("default repo exists; skipping directory creation")
+			log.Warn("default repo exists; skipping directory creation")
 		}
 	} else {
+		log.Infof("Creating repo %s if it doesn't exist", repo)
 		if _, err := os.Stat(repo); err != nil && os.IsNotExist(err) {
-			common.Logger.Fatal("Repo does not exist:", err)
-			os.Exit(1)
+			log.Info("creating repo", repo)
+			if err = os.Mkdir(repo, 0700); err != nil {
+				log.Fatal(err)
+			}
 		}
 
 	}
 	// Generate libp2p keypair if it doesn't exist
 	var privKey crypto.PrivKey
+	privKeyPath := repo + "/private_key.pem"
 	if c.PeerKeyPath == "" {
-		privKeyPath := repo + "/private_key.pem"
-		pubKeyPath := repo + "/public_key.pem"
-		if _, err := os.Open(privKeyPath); err != nil {
-			common.Logger.Info("Generating new peer keys at default location")
-			privKey, pubKey, err := crypto.GenerateKeyPair(
-				crypto.Ed25519,
-				-1,
-			)
+		pkp, err := os.Open(privKeyPath)
+		if err != nil {
+			log.Info("Generating new peer keys at default location")
+			privKey, err := genLibp2pKey()
 			if err != nil {
-				common.Logger.Fatalf("Key generation issue: %s", err)
+				log.Fatalf("Key generation issue: %s", err)
 				os.Exit(1)
 				return
 			}
@@ -69,13 +74,6 @@ func main() {
 			privKeyBytes, err := crypto.MarshalPrivateKey(privKey)
 			if err != nil {
 				fmt.Println("Error marshaling private key:", err)
-				return
-			}
-
-			// Convert public key to bytes
-			pubKeyBytes, err := crypto.MarshalPublicKey(pubKey)
-			if err != nil {
-				fmt.Println("Error marshaling public key:", err)
 				return
 			}
 
@@ -93,39 +91,30 @@ func main() {
 				return
 			}
 
-			common.Logger.Info("Private key saved to", privKeyPath)
+			log.Info("Private key saved to", privKeyPath)
 
-			// Save public key to a file
-			pubKeyFile, err := os.Create(pubKeyPath)
-			if err != nil {
-				fmt.Println("Error creating public key file:", err)
-				return
-			}
-			defer pubKeyFile.Close()
-
-			_, err = pubKeyFile.Write(pubKeyBytes)
-			if err != nil {
-				fmt.Println("Error writing public key to file:", err)
-				return
-			}
-
-			common.Logger.Info("Public key saved to", pubKeyPath)
 		} else {
-			common.Logger.Info("Peer key exists, skipping creation")
+			log.Info("Peer key exists, skipping creation")
 		}
-	} else {
-		privKeyFile, err := os.Open(c.PeerKeyPath)
+		defer pkp.Close()
+	}
+	if privKey == nil {
+		if c.PeerKeyPath != "" {
+			privKeyPath = c.PeerKeyPath
+		}
+		log.Info("loading peerkey", privKeyPath)
+		var err error
+		privKey, err = loadPrivateKey(privKeyPath)
 		if err != nil {
-			common.Logger.Fatalf("Key does not exist: %s", err)
+			log.Fatalf("Unmarshalling key error: %s", err)
 			os.Exit(1)
 		}
-		privKeyBytes := make([]byte, 100)
-		privKeyFile.Read(privKeyBytes)
-		privKey, err = crypto.UnmarshalPrivateKey(privKeyBytes)
+		peerKeyID, err := peer.IDFromPrivateKey(privKey)
 		if err != nil {
-			common.Logger.Fatalf("Unmarshalling key error: %s", err)
+			log.Fatalf("Load peer id error: %s", err)
 			os.Exit(1)
 		}
+		log.Info("Loaded peerkey:", peerKeyID)
 	}
 	/*
 		// Get Peer ID
@@ -136,14 +125,25 @@ func main() {
 	*/
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", c.ListenHost, c.ListenPort))
 	h, err := libp2p.New(
-		libp2p.ListenAddrs(sourceMultiAddr),
 		libp2p.Identity(privKey),
+		libp2p.Ping(true),
+		libp2p.ListenAddrs(sourceMultiAddr),
 	)
 	if err != nil {
-		common.Logger.Fatal("Error create new libp2p host:", err)
+		log.Fatal("Error create new libp2p host:", err)
 		os.Exit(1)
 	}
-	common.Logger.Info("Successfully created node")
+	peerInfo := peer.AddrInfo{
+		ID:    h.ID(),
+		Addrs: h.Addrs(),
+	}
+	addrs, err := peer.AddrInfoToP2pAddrs(&peerInfo)
+	if err != nil {
+		log.Fatal("Error create new libp2p host:", err)
+		os.Exit(1)
+	}
+	log.Info("PeerID:", addrs[0])
+	log.Info("Successfully created node")
 
 	// grpc server
 	s := grpc.NewServer(p2pgrpc.WithP2PCredentials())
@@ -154,8 +154,53 @@ func main() {
 	defer cancel()
 	l := p2pgrpc.NewListener(ctx, h, pid)
 	go s.Serve(l)
-	common.Logger.Info("Started GRPC Server")
+	log.Info("Started GRPC Server")
+	pl, err := os.OpenFile(c.PeerList, os.O_RDONLY, os.ModePerm)
+	if err != nil {
+		log.Warn("no peers found", err)
+	} else {
+		pls := bufio.NewScanner(pl)
+		if err = connectToPeers(h, ctx, pls); err != nil {
+			log.Fatal(err)
+			os.Exit(1)
+		}
+	}
 	select {}
+}
+
+func connectToPeers(h host.Host, ctx context.Context, pls *bufio.Scanner) error {
+	pls.Split(bufio.ScanLines)
+	for pls.Scan() {
+		ma, err := multiaddr.NewMultiaddr(pls.Text())
+		if err != nil {
+			return nil
+		}
+		peer, err := peer.AddrInfosFromP2pAddrs(ma)
+		if err != nil {
+			return nil
+		}
+		if err := h.Connect(ctx, peer[0]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func genLibp2pKey() (crypto.PrivKey, error) {
+	pk, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	return pk, nil
+}
+
+func loadPrivateKey(path string) (crypto.PrivKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	return crypto.UnmarshalPrivateKey(data)
 }
 
 type config struct {
@@ -165,4 +210,5 @@ type config struct {
 	ListenPort       int
 	Repo             string
 	PeerKeyPath      string
+	PeerList         string
 }
