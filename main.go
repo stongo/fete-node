@@ -19,7 +19,9 @@ import (
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 
-	"github.com/stongo/fetenode/common"
+	"github.com/stongo/fete-node/common"
+	"github.com/stongo/fete-node/greeter"
+	"github.com/stongo/fete-node/proto"
 )
 
 const pid protocol.ID = "/grpc/1.0.0"
@@ -41,7 +43,7 @@ func main() {
 			log.Fatalf("problem getting home dir: %s", err)
 			os.Exit(1)
 		}
-		repo = hd + "/.fetenode"
+		repo = hd + "/.fete-node"
 		log.Info("creating repo", repo)
 		// TODO: better error handling
 		if err = os.Mkdir(repo, 0700); err != nil && os.IsNotExist(err) {
@@ -148,7 +150,7 @@ func main() {
 
 	// grpc server
 	s := grpc.NewServer(p2pgrpc.WithP2PCredentials())
-	//proto.RegisterGreeterServer(s, &greeter.Server{})
+	proto.RegisterGreeterServer(s, &greeter.Server{})
 
 	// serve grpc server over libp2p host
 	ctx, cancel := context.WithCancel(context.Background())
@@ -160,35 +162,51 @@ func main() {
 	if err != nil {
 		log.Warn("no peers found", err)
 	} else {
+		// TODO: Proper peer handling
+		var peerconfig []string
 		pls := bufio.NewScanner(pl)
-		if err = connectToPeers(h, ctx, pls); err != nil {
-			log.Fatal(err)
-			os.Exit(1)
+		pls.Split(bufio.ScanLines)
+		for pls.Scan() {
+			peerconfig = append(peerconfig, pls.Text())
 		}
-		log.Info("Connected to all peers")
+		connectedPeers := make(map[peer.ID]bool)
+		for {
+			ok, err := connectToPeers(h, ctx, peerconfig, connectedPeers)
+			if err != nil {
+				log.Fatal("problem connecting to peers:", err)
+				os.Exit(1)
+			}
+			if !ok {
+				log.Warn("Not all peers connected")
+				time.Sleep(10 * time.Second)
+				continue
+			}
+			log.Info("Connected to all peers")
+			break
+		}
 	}
 	select {}
 }
 
-func connectToPeers(h host.Host, ctx context.Context, pls *bufio.Scanner) error {
-	time.Sleep(20 * time.Second)
-	pls.Split(bufio.ScanLines)
-	for pls.Scan() {
-		ma, err := multiaddr.NewMultiaddr(pls.Text())
+func connectToPeers(h host.Host, ctx context.Context, pls []string, pm map[peer.ID]bool) (bool, error) {
+	for _, pl := range pls {
+		ma, err := multiaddr.NewMultiaddr(pl)
 		if err != nil {
-			return nil
+			return false, err
 		}
 		p, err := peer.AddrInfosFromP2pAddrs(ma)
 		if err != nil {
-			return nil
+			return false, err
 		}
-		if p[0].ID != h.ID() {
+		peerid := p[0].ID
+		if peerid != h.ID() {
 			if err := h.Connect(ctx, p[0]); err != nil {
-				return err
+				return false, nil
 			}
+			pm[peerid] = true
 		}
 	}
-	return nil
+	return true, nil
 }
 
 func genLibp2pKey() (crypto.PrivKey, error) {
@@ -208,11 +226,10 @@ func loadPrivateKey(path string) (crypto.PrivKey, error) {
 }
 
 type config struct {
-	RendezvousString string
-	ProtocolID       string
-	ListenHost       string
-	ListenPort       int
-	Repo             string
-	PeerKeyPath      string
-	PeerList         string
+	ProtocolID  string
+	ListenHost  string
+	ListenPort  int
+	Repo        string
+	PeerKeyPath string
+	PeerList    string
 }

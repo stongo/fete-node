@@ -4,4 +4,4 @@ import (
 	"github.com/ipfs/go-log"
 )
 
-var Logger = log.Logger("fetenode")
+var Logger = log.Logger("fete-node")
