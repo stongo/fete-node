@@ -5,3 +5,6 @@ RUN apt update && apt upgrade -y && apt install -y protoc-gen-go protobuf-compil
 WORKDIR /src
 RUN make all 
 RUN mv fete-node /usr/local/bin && chmod +x /usr/local/bin/fete-node
+EXPOSE 4001
+EXPOSE 5000
+VOLUME /var/lib/fete-node
