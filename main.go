@@ -39,74 +39,15 @@ func main() {
 	repo, err := checkOrCreateRepo(c.Repo)
 	if err != nil {
 		log.Fatal(err)
+		os.Exit(1)
 	}
-	// Generate libp2p keypair if it doesn't exist
-	var privKey crypto.PrivKey
-	privKeyPath := repo + "/private_key.pem"
-	if c.PeerKeyPath == "" {
-		pkp, err := os.Open(privKeyPath)
-		if err != nil {
-			log.Info("Generating new peer keys at default location")
-			privKey, err := genLibp2pKey()
-			if err != nil {
-				log.Fatalf("Key generation issue: %s", err)
-				os.Exit(1)
-				return
-			}
 
-			// Convert private key to bytes
-			privKeyBytes, err := crypto.MarshalPrivateKey(privKey)
-			if err != nil {
-				fmt.Println("Error marshaling private key:", err)
-				return
-			}
-
-			// Save private key to a file
-			privKeyFile, err := os.Create(privKeyPath)
-			if err != nil {
-				fmt.Println("Error creating private key file:", err)
-				return
-			}
-			defer privKeyFile.Close()
-
-			_, err = privKeyFile.Write(privKeyBytes)
-			if err != nil {
-				fmt.Println("Error writing private key to file:", err)
-				return
-			}
-
-			log.Info("Private key saved to", privKeyPath)
-
-		} else {
-			log.Info("Peer key exists, skipping creation")
-		}
-		defer pkp.Close()
+	privKey, err := checkOrCreatePrivateKey(c.PeerKeyPath, repo)
+	if err != nil {
+		log.Fatal(err)
+		os.Exit(1)
 	}
-	if privKey == nil {
-		if c.PeerKeyPath != "" {
-			privKeyPath = c.PeerKeyPath
-		}
-		log.Info("loading peerkey", privKeyPath)
-		var err error
-		privKey, err = loadPrivateKey(privKeyPath)
-		if err != nil {
-			log.Fatalf("Unmarshalling key error: %s", err)
-			os.Exit(1)
-		}
-		peerKeyID, err := peer.IDFromPrivateKey(privKey)
-		if err != nil {
-			log.Fatalf("Load peer id error: %s", err)
-			os.Exit(1)
-		}
-		log.Info("Loaded peerkey:", peerKeyID)
-	}
-	/*
-		// Get Peer ID
-		peerID, err := peer.IDFromPublicKey(pubKey)
-		if err != nil {
-			return nil, err
-		}
-	*/
+
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", c.ListenAdddress, c.ListenPort))
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
@@ -137,7 +78,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	l := p2pgrpc.NewListener(ctx, h, pid)
-	go s.Serve(l)
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.Serve(l) }()
 	log.Info("Started GRPC Server")
 	pl, err := os.OpenFile(c.PeerList, os.O_RDONLY, os.ModePerm)
 	if err != nil {
@@ -166,7 +108,11 @@ func main() {
 			break
 		}
 	}
-	select {}
+	select {
+	case err := <-errCh:
+		log.Fatal(err)
+		os.Exit(1)
+	}
 }
 
 func checkOrCreateRepo(repo string) (r string, err error) {
@@ -193,6 +139,64 @@ func checkOrCreateRepo(repo string) (r string, err error) {
 
 	}
 	return repo, nil
+}
+
+func checkOrCreatePrivateKey(peerKeyPath, repo string) (crypto.PrivKey, error) {
+	log := common.Logger
+	var privKey crypto.PrivKey
+	var privKeyPath string
+	if peerKeyPath == "" {
+		privKeyPath = repo + "/private_key.pem"
+		pkp, err := os.Open(privKeyPath)
+		if err != nil {
+			log.Info("Generating new peer keys at default location")
+			privKey, err := genLibp2pKey()
+			if err != nil {
+				return nil, fmt.Errorf("Key generation issue: %s", err)
+			}
+
+			// Convert private key to bytes
+			privKeyBytes, err := crypto.MarshalPrivateKey(privKey)
+			if err != nil {
+				return nil, fmt.Errorf("Error marshaling private key:i %s", err)
+			}
+
+			// Save private key to a file
+			privKeyFile, err := os.Create(privKeyPath)
+			if err != nil {
+				return nil, fmt.Errorf("Error creating private key file: %s", err)
+			}
+			defer privKeyFile.Close()
+
+			_, err = privKeyFile.Write(privKeyBytes)
+			if err != nil {
+				return nil, fmt.Errorf("Error writing private key to file: %s", err)
+			}
+
+			log.Info("Private key saved to", privKeyPath)
+
+		} else {
+			log.Info("Peer key exists, skipping creation")
+		}
+		defer pkp.Close()
+	}
+	if privKey == nil {
+		if peerKeyPath != "" {
+			privKeyPath = peerKeyPath
+		}
+		log.Info("loading peerkey", privKeyPath)
+		var err error
+		privKey, err = loadPrivateKey(privKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("Unmarshalling key error: %s", err)
+		}
+		peerKeyID, err := peer.IDFromPrivateKey(privKey)
+		if err != nil {
+			return nil, fmt.Errorf("Load peer id error: %s", err)
+		}
+		log.Info("Loaded peerkey:", peerKeyID)
+	}
+	return privKey, nil
 }
 
 func connectToPeers(h host.Host, ctx context.Context, pls []string, pm map[peer.ID]bool) (bool, error) {
