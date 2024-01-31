@@ -6,11 +6,9 @@ import (
 	"crypto/rand"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"time"
-
-	p2pgrpc "github.com/birros/go-libp2p-grpc"
-	"google.golang.org/grpc"
 
 	libp2p "github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -20,8 +18,7 @@ import (
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/stongo/fete-node/common"
-	"github.com/stongo/fete-node/greeter"
-	"github.com/stongo/fete-node/proto"
+	"github.com/stongo/fete-node/rpc"
 	"github.com/stongo/fete-node/signer"
 )
 
@@ -32,6 +29,7 @@ func main() {
 	log := common.Logger
 	flag.StringVar(&c.ListenAdddress, "address", "0.0.0.0", "The bootstrap node host listen address\n")
 	flag.IntVar(&c.ListenPort, "port", 4001, "Node listen port")
+	flag.IntVar(&c.HTTPListenPort, "http-port", 5000, "Node listen port")
 	flag.StringVar(&c.PeerKeyPath, "key-path", "", "Private key path")
 	flag.StringVar(&c.PeerList, "peer-list", "", "Path to file containing peer multiaddrs")
 	flag.StringVar(&c.Repo, "repo", "", "Sets a protocol id for stream headers")
@@ -71,17 +69,20 @@ func main() {
 	log.Info("PeerID:", addrs[0])
 	log.Info("Successfully created node")
 
-	// grpc server
-	s := grpc.NewServer(p2pgrpc.WithP2PCredentials())
-	proto.RegisterGreeterServer(s, &greeter.Server{})
+	// jsonrpc 2.0 server
+	s, err := rpc.NewServer()
+	if err != nil {
+		log.Errorf("Problem creating JSONRPC server: %s", err)
+	}
+	http.HandleFunc("/rpc", s.ServeHTTP)
+	errCh := make(chan error, 1)
 
-	// serve grpc server over libp2p host
+	go func() { errCh <- http.ListenAndServe(fmt.Sprintf(":%d", c.HTTPListenPort), nil) }()
+	log.Info("Started HTTP JSONRPC 2.0 Server")
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	l := p2pgrpc.NewListener(ctx, h, pid)
-	errCh := make(chan error, 1)
-	go func() { errCh <- s.Serve(l) }()
-	log.Info("Started GRPC Server")
+
 	pl, err := os.OpenFile(c.PeerList, os.O_RDONLY, os.ModePerm)
 	if err != nil {
 		log.Warn("no peers found", err)
@@ -109,6 +110,7 @@ func main() {
 			break
 		}
 	}
+	defer pl.Close()
 	p, err := signer.NewSigner(&signer.SignerOpts{Libp2pPrivKey: privKey})
 	if err != nil {
 		log.Fatalf("Error creating a new TSS signer: %s", err)
@@ -247,6 +249,7 @@ type config struct {
 	ProtocolID     string
 	ListenAdddress string
 	ListenPort     int
+	HTTPListenPort int
 	Repo           string
 	PeerKeyPath    string
 	PeerList       string
