@@ -1,7 +1,12 @@
+provider "aws" {
+  region = local.region
+}
+
 module "ecs" {
   source = "terraform-aws-modules/ecs/aws"
 
-  cluster_name = local.name 
+  cluster_name                          = local.name
+
   default_capacity_provider_use_fargate = false
   autoscaling_capacity_providers = {
     # On-demand instances
@@ -13,7 +18,7 @@ module "ecs" {
         maximum_scaling_step_size = 3
         minimum_scaling_step_size = 1
         status                    = "ENABLED"
-        target_capacity           = 3 
+        target_capacity           = 3
       }
 
       default_capacity_provider_strategy = {
@@ -25,35 +30,8 @@ module "ecs" {
   tags = local.tags
 }
 
-module "autoscaling_sg" {
-  source  = "terraform-aws-modules/security-group/aws"
-  version = "~> 5.0"
-
-  name        = local.name
-  description = "Autoscaling group security group"
-  vpc_id      = module.vpc.vpc_id
-
-  ingress_with_cidr_blocks = [
-    {
-      from_port   = p2p_port 
-      to_port     = p2p_port
-      protocol    = "tcp"
-      description = "p2p ports"
-      cidr_blocks = [local.private_subnets] 
-    },
-  ]
-  ingress_with_source_security_group_id = [
-    {
-      from_port   = local.api_port 
-      to_port     = local.api_port
-      protocol    = "http"
-      description = "api"
-      source_security_group_id = module.alb.security_group_id
-    },
-  ]
-  egress_rules = ["all-all"]
-
-  tags = local.tags
+data "aws_ssm_parameter" "ecs_optimized_ami" {
+  name = "/aws/service/ecs/optimized-ami/amazon-linux-2/recommended"
 }
 
 module "alb" {
@@ -85,8 +63,8 @@ module "alb" {
 
   listeners = {
     api_tcp = {
-      port     = local.api_port 
-      protocol = "http"
+      port     = local.api_port
+      protocol = "HTTP"
 
       forward = {
         target_group_key = "fete_network_ecs"
@@ -97,18 +75,18 @@ module "alb" {
   target_groups = {
     fete_network_ecs = {
       backend_protocol                  = "HTTP"
-      backend_port                      = local.container_port
+      backend_port                      = local.api_port
       target_type                       = "ip"
       deregistration_delay              = 5
       load_balancing_cross_zone_enabled = true
 
       health_check = {
-        enabled             = false 
+        enabled             = false
         healthy_threshold   = 5
         interval            = 30
         matcher             = "200"
         path                = "/"
-        port                = "local.api_port"
+        port                = local.api_port
         protocol            = "http"
         timeout             = 5
         unhealthy_threshold = 2
@@ -122,6 +100,38 @@ module "alb" {
 
   tags = local.tags
 }
+
+module "autoscaling_sg" {
+  source  = "terraform-aws-modules/security-group/aws"
+  version = "~> 5.0"
+
+  name        = local.name
+  description = "Autoscaling group security group"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress_with_cidr_blocks = [
+    {
+      from_port   = local.p2p_port
+      to_port     = local.p2p_port
+      protocol    = "tcp"
+      description = "p2p ports"
+      cidr_blocks = local.vpc_cidr
+    },
+  ]
+  ingress_with_source_security_group_id = [
+    {
+      from_port                = local.api_port
+      to_port                  = local.api_port
+      protocol                 = "http"
+      description              = "api"
+      source_security_group_id = module.alb.security_group_id
+    },
+  ]
+  egress_rules = ["all-all"]
+
+  tags = local.tags
+}
+
 
 module "autoscaling" {
   source  = "terraform-aws-modules/autoscaling/aws"
