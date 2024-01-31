@@ -6,11 +6,9 @@ import (
 	"crypto/rand"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"time"
-
-	p2pgrpc "github.com/birros/go-libp2p-grpc"
-	"google.golang.org/grpc"
 
 	libp2p "github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -20,8 +18,8 @@ import (
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/stongo/fete-node/common"
-	"github.com/stongo/fete-node/greeter"
-	"github.com/stongo/fete-node/proto"
+	"github.com/stongo/fete-node/rpc"
+	"github.com/stongo/fete-node/signer"
 )
 
 const pid protocol.ID = "/grpc/1.0.0"
@@ -31,101 +29,27 @@ func main() {
 	log := common.Logger
 	flag.StringVar(&c.ListenAdddress, "address", "0.0.0.0", "The bootstrap node host listen address\n")
 	flag.IntVar(&c.ListenPort, "port", 4001, "Node listen port")
+	flag.IntVar(&c.HTTPListenPort, "http-port", 5000, "Node listen port")
 	flag.StringVar(&c.PeerKeyPath, "key-path", "", "Private key path")
 	flag.StringVar(&c.PeerList, "peer-list", "", "Path to file containing peer multiaddrs")
 	flag.StringVar(&c.Repo, "repo", "", "Sets a protocol id for stream headers")
 	flag.Parse()
 
-	repo := c.Repo
-	if repo == "" {
-		hd, err := os.UserHomeDir()
-		if err != nil {
-			log.Fatalf("problem getting home dir: %s", err)
-			os.Exit(1)
-		}
-		repo = hd + "/.fete-node"
-		log.Info("creating repo", repo)
-		// TODO: better error handling
-		if err = os.Mkdir(repo, 0700); err != nil && os.IsNotExist(err) {
-			log.Warn("default repo exists; skipping directory creation")
-		}
-	} else {
-		log.Infof("Creating repo %s if it doesn't exist", repo)
-		if _, err := os.Stat(repo); err != nil && os.IsNotExist(err) {
-			log.Info("creating repo", repo)
-			if err = os.Mkdir(repo, 0700); err != nil {
-				log.Fatal(err)
-			}
-		}
-
+	// Repo management
+	repo, err := checkOrCreateRepo(c.Repo)
+	if err != nil {
+		log.Fatal(err)
+		os.Exit(1)
 	}
-	// Generate libp2p keypair if it doesn't exist
-	var privKey crypto.PrivKey
-	privKeyPath := repo + "/private_key.pem"
-	if c.PeerKeyPath == "" {
-		pkp, err := os.Open(privKeyPath)
-		if err != nil {
-			log.Info("Generating new peer keys at default location")
-			privKey, err := genLibp2pKey()
-			if err != nil {
-				log.Fatalf("Key generation issue: %s", err)
-				os.Exit(1)
-				return
-			}
 
-			// Convert private key to bytes
-			privKeyBytes, err := crypto.MarshalPrivateKey(privKey)
-			if err != nil {
-				fmt.Println("Error marshaling private key:", err)
-				return
-			}
-
-			// Save private key to a file
-			privKeyFile, err := os.Create(privKeyPath)
-			if err != nil {
-				fmt.Println("Error creating private key file:", err)
-				return
-			}
-			defer privKeyFile.Close()
-
-			_, err = privKeyFile.Write(privKeyBytes)
-			if err != nil {
-				fmt.Println("Error writing private key to file:", err)
-				return
-			}
-
-			log.Info("Private key saved to", privKeyPath)
-
-		} else {
-			log.Info("Peer key exists, skipping creation")
-		}
-		defer pkp.Close()
+	// Libp2p key management
+	privKey, err := checkOrCreatePrivateKey(c.PeerKeyPath, repo)
+	if err != nil {
+		log.Fatal(err)
+		os.Exit(1)
 	}
-	if privKey == nil {
-		if c.PeerKeyPath != "" {
-			privKeyPath = c.PeerKeyPath
-		}
-		log.Info("loading peerkey", privKeyPath)
-		var err error
-		privKey, err = loadPrivateKey(privKeyPath)
-		if err != nil {
-			log.Fatalf("Unmarshalling key error: %s", err)
-			os.Exit(1)
-		}
-		peerKeyID, err := peer.IDFromPrivateKey(privKey)
-		if err != nil {
-			log.Fatalf("Load peer id error: %s", err)
-			os.Exit(1)
-		}
-		log.Info("Loaded peerkey:", peerKeyID)
-	}
-	/*
-		// Get Peer ID
-		peerID, err := peer.IDFromPublicKey(pubKey)
-		if err != nil {
-			return nil, err
-		}
-	*/
+
+	// Create a libp2p node
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", c.ListenAdddress, c.ListenPort))
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
@@ -136,6 +60,7 @@ func main() {
 		log.Fatal("Error create new libp2p host:", err)
 		os.Exit(1)
 	}
+	defer h.Close()
 	peerInfo := peer.AddrInfo{
 		ID:    h.ID(),
 		Addrs: h.Addrs(),
@@ -148,19 +73,25 @@ func main() {
 	log.Info("PeerID:", addrs[0])
 	log.Info("Successfully created node")
 
-	// grpc server
-	s := grpc.NewServer(p2pgrpc.WithP2PCredentials())
-	proto.RegisterGreeterServer(s, &greeter.Server{})
+	// Jsonrpc 2.0 server
+	// use this for message signing requests
+	s, err := rpc.NewServer()
+	if err != nil {
+		log.Errorf("Problem creating JSONRPC server: %s", err)
+	}
+	http.HandleFunc("/rpc", s.ServeHTTP)
+	errCh := make(chan error, 1)
 
-	// serve grpc server over libp2p host
+	go func() { errCh <- http.ListenAndServe(fmt.Sprintf(":%d", c.HTTPListenPort), nil) }()
+	log.Info("Started HTTP JSONRPC 2.0 Server")
+
+	// Connect to known peers only
+	// p2p network is for tss signing party
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	l := p2pgrpc.NewListener(ctx, h, pid)
-	go s.Serve(l)
-	log.Info("Started GRPC Server")
 	pl, err := os.OpenFile(c.PeerList, os.O_RDONLY, os.ModePerm)
 	if err != nil {
-		log.Warn("no peers found", err)
+		log.Warn("no peers found:", err)
 	} else {
 		// TODO: Proper peer handling
 		var peerconfig []string
@@ -185,9 +116,109 @@ func main() {
 			break
 		}
 	}
-	select {}
+	defer pl.Close()
+	p, err := signer.NewSigner(&signer.SignerOpts{Libp2pPrivKey: privKey})
+	if err != nil {
+		log.Fatalf("Error creating a new TSS signer: %s", err)
+		os.Exit(1)
+	}
+	log.Infof("Success creating new signer: %s", p.PartyID)
+	select {
+	case err := <-errCh:
+		log.Fatal(err)
+		os.Exit(1)
+	}
 }
 
+/* If a user supplies repo info, check if it's there already, or else create it
+ * Otherwise create a repo at the default location if it doesn't exist
+ */
+func checkOrCreateRepo(repo string) (r string, err error) {
+	log := common.Logger
+	if repo == "" {
+		hd, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("problem getting home dir: %s", err)
+		}
+		repo = hd + "/.fete-node"
+		log.Info("creating repo", repo)
+		// TODO: better error handling
+		if err = os.Mkdir(repo, 0700); err != nil && os.IsNotExist(err) {
+			log.Warn("default repo exists; skipping directory creation")
+		}
+	} else {
+		log.Infof("Creating repo %s if it doesn't exist", repo)
+		if _, err := os.Stat(repo); err != nil && os.IsNotExist(err) {
+			log.Info("creating repo", repo)
+			if err = os.Mkdir(repo, 0700); err != nil {
+				return "", err
+			}
+		}
+
+	}
+	return repo, nil
+}
+
+/* Check if a key already exists, or else create one */
+func checkOrCreatePrivateKey(peerKeyPath, repo string) (crypto.PrivKey, error) {
+	log := common.Logger
+	var privKey crypto.PrivKey
+	var privKeyPath string
+	if peerKeyPath == "" {
+		privKeyPath = repo + "/private_key.pem"
+		pkp, err := os.Open(privKeyPath)
+		if err != nil {
+			log.Info("Generating new peer keys at default location")
+			privKey, err := genLibp2pKey()
+			if err != nil {
+				return nil, fmt.Errorf("Key generation issue: %s", err)
+			}
+
+			// Convert private key to bytes
+			privKeyBytes, err := crypto.MarshalPrivateKey(privKey)
+			if err != nil {
+				return nil, fmt.Errorf("Error marshaling private key:i %s", err)
+			}
+
+			// Save private key to a file
+			privKeyFile, err := os.Create(privKeyPath)
+			if err != nil {
+				return nil, fmt.Errorf("Error creating private key file: %s", err)
+			}
+			defer privKeyFile.Close()
+
+			_, err = privKeyFile.Write(privKeyBytes)
+			if err != nil {
+				return nil, fmt.Errorf("Error writing private key to file: %s", err)
+			}
+
+			log.Info("Private key saved to", privKeyPath)
+
+		} else {
+			log.Info("Peer key exists, skipping creation")
+		}
+		defer pkp.Close()
+	}
+	if privKey == nil {
+		if peerKeyPath != "" {
+			privKeyPath = peerKeyPath
+		}
+		log.Info("loading peerkey", privKeyPath)
+		var err error
+		privKey, err = loadPrivateKey(privKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("Unmarshalling key error: %s", err)
+		}
+		peerKeyID, err := peer.IDFromPrivateKey(privKey)
+		if err != nil {
+			return nil, fmt.Errorf("Load peer id error: %s", err)
+		}
+		log.Info("Loaded peerkey:", peerKeyID)
+	}
+	return privKey, nil
+}
+
+/* Connect to know peers, supplied in the "pls" argument */
 func connectToPeers(h host.Host, ctx context.Context, pls []string, pm map[peer.ID]bool) (bool, error) {
 	for _, pl := range pls {
 		ma, err := multiaddr.NewMultiaddr(pl)
@@ -209,6 +240,7 @@ func connectToPeers(h host.Host, ctx context.Context, pls []string, pm map[peer.
 	return true, nil
 }
 
+/* Generate a private key*/
 func genLibp2pKey() (crypto.PrivKey, error) {
 	pk, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {
@@ -217,6 +249,7 @@ func genLibp2pKey() (crypto.PrivKey, error) {
 	return pk, nil
 }
 
+/* Load a private key from file */
 func loadPrivateKey(path string) (crypto.PrivKey, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -225,10 +258,12 @@ func loadPrivateKey(path string) (crypto.PrivKey, error) {
 	return crypto.UnmarshalPrivateKey(data)
 }
 
+/* Application config */
 type config struct {
 	ProtocolID     string
 	ListenAdddress string
 	ListenPort     int
+	HTTPListenPort int
 	Repo           string
 	PeerKeyPath    string
 	PeerList       string
