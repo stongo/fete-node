@@ -25,4 +25,4 @@ jobs:
       with:
         context: .
         push: true
-        tags: stongo/fete-node:${{ github.head_ref }}
+        tags: stongo/fete-node:${{ github.ref_name }}
