@@ -36,28 +36,9 @@ func main() {
 	flag.StringVar(&c.Repo, "repo", "", "Sets a protocol id for stream headers")
 	flag.Parse()
 
-	repo := c.Repo
-	if repo == "" {
-		hd, err := os.UserHomeDir()
-		if err != nil {
-			log.Fatalf("problem getting home dir: %s", err)
-			os.Exit(1)
-		}
-		repo = hd + "/.fete-node"
-		log.Info("creating repo", repo)
-		// TODO: better error handling
-		if err = os.Mkdir(repo, 0700); err != nil && os.IsNotExist(err) {
-			log.Warn("default repo exists; skipping directory creation")
-		}
-	} else {
-		log.Infof("Creating repo %s if it doesn't exist", repo)
-		if _, err := os.Stat(repo); err != nil && os.IsNotExist(err) {
-			log.Info("creating repo", repo)
-			if err = os.Mkdir(repo, 0700); err != nil {
-				log.Fatal(err)
-			}
-		}
-
+	repo, err := checkOrCreateRepo(c.Repo)
+	if err != nil {
+		log.Fatal(err)
 	}
 	// Generate libp2p keypair if it doesn't exist
 	var privKey crypto.PrivKey
@@ -186,6 +167,32 @@ func main() {
 		}
 	}
 	select {}
+}
+
+func checkOrCreateRepo(repo string) (r string, err error) {
+	log := common.Logger
+	if repo == "" {
+		hd, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("problem getting home dir: %s", err)
+		}
+		repo = hd + "/.fete-node"
+		log.Info("creating repo", repo)
+		// TODO: better error handling
+		if err = os.Mkdir(repo, 0700); err != nil && os.IsNotExist(err) {
+			log.Warn("default repo exists; skipping directory creation")
+		}
+	} else {
+		log.Infof("Creating repo %s if it doesn't exist", repo)
+		if _, err := os.Stat(repo); err != nil && os.IsNotExist(err) {
+			log.Info("creating repo", repo)
+			if err = os.Mkdir(repo, 0700); err != nil {
+				return "", err
+			}
+		}
+
+	}
+	return repo, nil
 }
 
 func connectToPeers(h host.Host, ctx context.Context, pls []string, pm map[peer.ID]bool) (bool, error) {
