@@ -52,17 +52,14 @@ module "ecs_service" {
   } 
 
   load_balancer = {
-    target_group_arn = module.alb.target_groups["fete_network_ecs"].arn
-    container_name   = local.container_name 
-    container_port   = local.api_port
+    service = { 
+      target_group_arn = module.alb.target_groups["fete_network_ecs"].arn
+      container_name   = local.container_name 
+      container_port   = local.api_port 
+    }
   }
 
   subnet_ids = module.vpc.private_subnets
-
-  placement_constraints = {
-    type       = "memberOf"
-    expression = "attribute:ecs.availability-zone in [us-east-2a, us-east-2b, us-east-2c]"
-  }
 
   security_group_rules = {
     alb_http_ingress = {
