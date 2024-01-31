@@ -1,2 +1,10 @@
 fete-node
+.terraform
+**/.terraform
+terraform.tfstate
+**/terraform.tfstate
+terraform.tfstate.backup
+**/terraform.tfstate.backup
 *.swp
+**/*.swp
+**/.terraform.lock.hcl
