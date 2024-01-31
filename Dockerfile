@@ -8,4 +8,3 @@ RUN mv fete-node /usr/local/bin && chmod +x /usr/local/bin/fete-node
 EXPOSE 4001
 EXPOSE 5000
 VOLUME /var/lib/fete-node
-ENTRYPOINT /usr/local/bin/fete-node

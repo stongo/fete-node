@@ -2,9 +2,9 @@ module "ecs_service" {
   source  = "terraform-aws-modules/ecs/aws//modules/service"
   version = "5.8.0"
 
-  name                     = local.name 
+  name                     = local.name
   cluster_arn              = module.ecs.cluster_arn
-  iam_role_name            = local.name 
+  iam_role_name            = local.name
   requires_compatibilities = ["EC2"]
   desired_count            = "3"
   depends_on               = [module.autoscaling]
@@ -20,27 +20,27 @@ module "ecs_service" {
 
 
   volume = {
-    repo = {} 
+    repo = {}
   }
 
   container_definitions = {
     (local.container_name) = {
       // @TODO: pin verion
       image     = "stongo/fete-node:master"
-      command = ["fete-node", "--repo=/var/lib/fete-node"]
+      command   = ["fete-node", "--repo=/var/lib/fete-node"]
       cpu       = 2
       memory    = 2048
       essential = true
       port_mappings = [
         {
-          name = "p2p"
+          name          = "p2p"
           containerPort = local.p2p_port
-          protocol = "tcp"
+          protocol      = "tcp"
         },
         {
-          name = "api" 
-          containerPort = local.api_port 
-          protocol = "tcp"
+          name          = "api"
+          containerPort = local.api_port
+          protocol      = "tcp"
         },
       ]
 
@@ -51,16 +51,28 @@ module "ecs_service" {
         }
       ]
     },
-  } 
-  
+  }
+
   load_balancer = {
-    service = { 
+    service = {
       target_group_arn = module.alb.target_groups["fete_ecs"].arn
-      container_name   = local.container_name 
-      container_port   = local.api_port 
+      container_name   = local.container_name
+      container_port   = local.api_port
     }
   }
-  
+
+  service_connect_configuration = {
+    namespace = aws_service_discovery_http_namespace.this.arn
+    service = {
+      client_alias = {
+        port     = local.p2p_port
+        dns_name = local.container_name
+      }
+      port_name      = "p2p"
+      discovery_name = local.container_name
+    }
+  }
+
   subnet_ids = module.vpc.private_subnets
 
   security_group_rules = {
@@ -72,5 +84,5 @@ module "ecs_service" {
       description              = "Service port"
       source_security_group_id = module.alb.security_group_id
     }
-  }  
+  }
 }

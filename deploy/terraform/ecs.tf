@@ -5,7 +5,7 @@ provider "aws" {
 module "ecs" {
   source = "terraform-aws-modules/ecs/aws"
 
-  cluster_name                          = local.name
+  cluster_name = local.name
 
   default_capacity_provider_use_fargate = false
   autoscaling_capacity_providers = {
@@ -34,6 +34,12 @@ data "aws_ssm_parameter" "ecs_optimized_ami" {
   name = "/aws/service/ecs/optimized-ami/amazon-linux-2/recommended"
 }
 
+resource "aws_service_discovery_http_namespace" "this" {
+  name        = local.name
+  description = "CloudMap namespace for ${local.name}"
+  tags        = local.tags
+}
+
 module "alb" {
   source  = "terraform-aws-modules/alb/aws"
   version = "~> 9.0"
@@ -48,8 +54,8 @@ module "alb" {
   # Security Group
   security_group_ingress_rules = {
     all_http = {
-      from_port   = 5000 
-      to_port     = 5000 
+      from_port   = 5000
+      to_port     = 5000
       ip_protocol = "tcp"
       cidr_ipv4   = "0.0.0.0/0"
     }
@@ -67,7 +73,7 @@ module "alb" {
       protocol = "HTTP"
 
       forward = {
-        target_group_key = "fete_ecs" 
+        target_group_key = "fete_ecs"
       }
     }
   }
@@ -81,7 +87,7 @@ module "alb" {
       load_balancing_cross_zone_enabled = true
 
       health_check = {
-        enabled             = true 
+        enabled             = true
         healthy_threshold   = 5
         interval            = 30
         matcher             = "200"
