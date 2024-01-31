@@ -25,20 +25,22 @@ module "ecs_service" {
 
   container_definitions = {
     (local.container_name) = {
+      // @TODO: pin verion
       image     = "stongo/fete-node:master"
+      command = ["fete-node", "--repo=/var/lib/fete-node"]
       cpu       = 2
       memory    = 2048
       essential = true
-      portMappings = [
+      port_mappings = [
         {
           name = "p2p"
           containerPort = local.p2p_port
-          hostPort      = local.p2p_port
+          protocol = "tcp"
         },
         {
-          name = "api"
-          containerPort = local.api_port
-          hostPort      = local.api_port
+          name = "api" 
+          containerPort = local.api_port 
+          protocol = "tcp"
         },
       ]
 
@@ -50,15 +52,15 @@ module "ecs_service" {
       ]
     },
   } 
-
+  
   load_balancer = {
     service = { 
-      target_group_arn = module.alb.target_groups["fete_network_ecs"].arn
+      target_group_arn = module.alb.target_groups["fete_ecs"].arn
       container_name   = local.container_name 
       container_port   = local.api_port 
     }
   }
-
+  
   subnet_ids = module.vpc.private_subnets
 
   security_group_rules = {
@@ -66,7 +68,7 @@ module "ecs_service" {
       type                     = "ingress"
       from_port                = local.api_port
       to_port                  = local.api_port
-      protocol                 = "tcp"
+      protocol                 = "TCP"
       description              = "Service port"
       source_security_group_id = module.alb.security_group_id
     }

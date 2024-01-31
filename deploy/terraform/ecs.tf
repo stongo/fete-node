@@ -47,10 +47,10 @@ module "alb" {
 
   # Security Group
   security_group_ingress_rules = {
-    api_tcp = {
-      from_port   = local.api_port
-      to_port     = local.api_port
-      ip_protocol = "http"
+    all_http = {
+      from_port   = 5000 
+      to_port     = 5000 
+      ip_protocol = "tcp"
       cidr_ipv4   = "0.0.0.0/0"
     }
   }
@@ -67,13 +67,13 @@ module "alb" {
       protocol = "HTTP"
 
       forward = {
-        target_group_key = "fete_network_ecs"
+        target_group_key = "fete_ecs" 
       }
     }
   }
 
   target_groups = {
-    fete_network_ecs = {
+    fete_ecs = {
       backend_protocol                  = "HTTP"
       backend_port                      = local.api_port
       target_type                       = "ip"
@@ -81,13 +81,13 @@ module "alb" {
       load_balancing_cross_zone_enabled = true
 
       health_check = {
-        enabled             = false
+        enabled             = true 
         healthy_threshold   = 5
         interval            = 30
         matcher             = "200"
         path                = "/"
-        port                = local.api_port
-        protocol            = "http"
+        port                = "traffic-port"
+        protocol            = "HTTP"
         timeout             = 5
         unhealthy_threshold = 2
       }
@@ -100,38 +100,6 @@ module "alb" {
 
   tags = local.tags
 }
-
-module "autoscaling_sg" {
-  source  = "terraform-aws-modules/security-group/aws"
-  version = "~> 5.0"
-
-  name        = local.name
-  description = "Autoscaling group security group"
-  vpc_id      = module.vpc.vpc_id
-
-  ingress_with_cidr_blocks = [
-    {
-      from_port   = local.p2p_port
-      to_port     = local.p2p_port
-      protocol    = "tcp"
-      description = "p2p ports"
-      cidr_blocks = local.vpc_cidr
-    },
-  ]
-  ingress_with_source_security_group_id = [
-    {
-      from_port                = local.api_port
-      to_port                  = local.api_port
-      protocol                 = "http"
-      description              = "api"
-      source_security_group_id = module.alb.security_group_id
-    },
-  ]
-  egress_rules = ["all-all"]
-
-  tags = local.tags
-}
-
 
 module "autoscaling" {
   source  = "terraform-aws-modules/autoscaling/aws"
@@ -193,3 +161,36 @@ module "autoscaling" {
 
   tags = local.tags
 }
+
+module "autoscaling_sg" {
+  source  = "terraform-aws-modules/security-group/aws"
+  version = "~> 5.0"
+
+  name        = local.name
+  description = "Autoscaling group security group"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress_with_cidr_blocks = [
+    {
+      from_port   = local.p2p_port
+      to_port     = local.p2p_port
+      protocol    = "TCP"
+      description = "p2p ports"
+      cidr_blocks = local.vpc_cidr
+    },
+  ]
+  ingress_with_source_security_group_id = [
+    {
+      from_port                = local.api_port
+      to_port                  = local.api_port
+      protocol                 = "TCP"
+      description              = "api"
+      source_security_group_id = module.alb.security_group_id
+    },
+  ]
+  egress_rules = ["all-all"]
+
+  tags = local.tags
+}
+
+
