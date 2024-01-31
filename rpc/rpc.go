@@ -5,6 +5,7 @@ import (
 	"github.com/stongo/fete-node/common"
 )
 
+/* Service Interface */
 type MessageService struct{}
 
 /* Threshold message signing
@@ -15,6 +16,7 @@ func (s *MessageService) Sign(m string) bool {
 	return false
 }
 
+/* Ping method for testing */
 func (s *MessageService) Ping() string {
 	return "pong"
 }

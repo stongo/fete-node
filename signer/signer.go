@@ -10,16 +10,23 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 )
 
+/* A TSS Signer */
 type Signer struct {
 	PartyID *tss.PartyID
 	ID      string
-	PubKey  string
+	PeerID  string
 }
 
+/* Options for Signer
+ * PrivateKey is assiged here, but we should probably make this more secure
+ */
 type SignerOpts struct {
 	Libp2pPrivKey crypto.PrivKey
 }
 
+/* Create a new Signer
+ * ready to join a Party
+ */
 func NewSigner(o *SignerOpts) (*Signer, error) {
 	// Generate random id
 	id := petname.Generate(2, "-")
@@ -34,7 +41,7 @@ func NewSigner(o *SignerOpts) (*Signer, error) {
 	return &Signer{
 		PartyID: partyID,
 		ID:      id,
-		PubKey:  string(peerID),
+		PeerID:  string(peerID),
 	}, nil
 
 }

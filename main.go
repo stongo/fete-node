@@ -35,18 +35,21 @@ func main() {
 	flag.StringVar(&c.Repo, "repo", "", "Sets a protocol id for stream headers")
 	flag.Parse()
 
+	// Repo management
 	repo, err := checkOrCreateRepo(c.Repo)
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(1)
 	}
 
+	// Libp2p key management
 	privKey, err := checkOrCreatePrivateKey(c.PeerKeyPath, repo)
 	if err != nil {
 		log.Fatal(err)
 		os.Exit(1)
 	}
 
+	// Create a libp2p node
 	sourceMultiAddr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", c.ListenAdddress, c.ListenPort))
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
@@ -57,6 +60,7 @@ func main() {
 		log.Fatal("Error create new libp2p host:", err)
 		os.Exit(1)
 	}
+	defer h.Close()
 	peerInfo := peer.AddrInfo{
 		ID:    h.ID(),
 		Addrs: h.Addrs(),
@@ -69,7 +73,8 @@ func main() {
 	log.Info("PeerID:", addrs[0])
 	log.Info("Successfully created node")
 
-	// jsonrpc 2.0 server
+	// Jsonrpc 2.0 server
+	// use this for message signing requests
 	s, err := rpc.NewServer()
 	if err != nil {
 		log.Errorf("Problem creating JSONRPC server: %s", err)
@@ -80,12 +85,13 @@ func main() {
 	go func() { errCh <- http.ListenAndServe(fmt.Sprintf(":%d", c.HTTPListenPort), nil) }()
 	log.Info("Started HTTP JSONRPC 2.0 Server")
 
+	// Connect to known peers only
+	// p2p network is for tss signing party
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
 	pl, err := os.OpenFile(c.PeerList, os.O_RDONLY, os.ModePerm)
 	if err != nil {
-		log.Warn("no peers found", err)
+		log.Warn("no peers found:", err)
 	} else {
 		// TODO: Proper peer handling
 		var peerconfig []string
@@ -124,6 +130,9 @@ func main() {
 	}
 }
 
+/* If a user supplies repo info, check if it's there already, or else create it
+ * Otherwise create a repo at the default location if it doesn't exist
+ */
 func checkOrCreateRepo(repo string) (r string, err error) {
 	log := common.Logger
 	if repo == "" {
@@ -150,6 +159,7 @@ func checkOrCreateRepo(repo string) (r string, err error) {
 	return repo, nil
 }
 
+/* Check if a key already exists, or else create one */
 func checkOrCreatePrivateKey(peerKeyPath, repo string) (crypto.PrivKey, error) {
 	log := common.Logger
 	var privKey crypto.PrivKey
@@ -208,6 +218,7 @@ func checkOrCreatePrivateKey(peerKeyPath, repo string) (crypto.PrivKey, error) {
 	return privKey, nil
 }
 
+/* Connect to know peers, supplied in the "pls" argument */
 func connectToPeers(h host.Host, ctx context.Context, pls []string, pm map[peer.ID]bool) (bool, error) {
 	for _, pl := range pls {
 		ma, err := multiaddr.NewMultiaddr(pl)
@@ -229,6 +240,7 @@ func connectToPeers(h host.Host, ctx context.Context, pls []string, pm map[peer.
 	return true, nil
 }
 
+/* Generate a private key*/
 func genLibp2pKey() (crypto.PrivKey, error) {
 	pk, _, err := crypto.GenerateEd25519Key(rand.Reader)
 	if err != nil {
@@ -237,6 +249,7 @@ func genLibp2pKey() (crypto.PrivKey, error) {
 	return pk, nil
 }
 
+/* Load a private key from file */
 func loadPrivateKey(path string) (crypto.PrivKey, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -245,6 +258,7 @@ func loadPrivateKey(path string) (crypto.PrivKey, error) {
 	return crypto.UnmarshalPrivateKey(data)
 }
 
+/* Application config */
 type config struct {
 	ProtocolID     string
 	ListenAdddress string
