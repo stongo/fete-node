@@ -22,6 +22,7 @@ import (
 	"github.com/stongo/fete-node/common"
 	"github.com/stongo/fete-node/greeter"
 	"github.com/stongo/fete-node/proto"
+	"github.com/stongo/fete-node/signer"
 )
 
 const pid protocol.ID = "/grpc/1.0.0"
@@ -108,6 +109,12 @@ func main() {
 			break
 		}
 	}
+	p, err := signer.NewSigner(&signer.SignerOpts{Libp2pPrivKey: privKey})
+	if err != nil {
+		log.Fatalf("Error creating a new TSS signer: %s", err)
+		os.Exit(1)
+	}
+	log.Infof("Success creating new signer: %s", p.PartyID)
 	select {
 	case err := <-errCh:
 		log.Fatal(err)
