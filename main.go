@@ -29,7 +29,7 @@ const pid protocol.ID = "/grpc/1.0.0"
 func main() {
 	c := &config{}
 	log := common.Logger
-	flag.StringVar(&c.LIstenAdddress, "address", "0.0.0.0", "The bootstrap node host listen address\n")
+	flag.StringVar(&c.ListenAdddress, "address", "0.0.0.0", "The bootstrap node host listen address\n")
 	flag.IntVar(&c.ListenPort, "port", 4001, "Node listen port")
 	flag.StringVar(&c.PeerKeyPath, "key-path", "", "Private key path")
 	flag.StringVar(&c.PeerList, "peer-list", "", "Path to file containing peer multiaddrs")
@@ -126,7 +126,7 @@ func main() {
 			return nil, err
 		}
 	*/
-	sourceMultiAddr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", c.LIstenAdddress, c.ListenPort))
+	sourceMultiAddr, _ := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", c.ListenAdddress, c.ListenPort))
 	h, err := libp2p.New(
 		libp2p.Identity(privKey),
 		libp2p.Ping(true),
@@ -227,7 +227,7 @@ func loadPrivateKey(path string) (crypto.PrivKey, error) {
 
 type config struct {
 	ProtocolID     string
-	LIstenAdddress string
+	ListenAdddress string
 	ListenPort     int
 	Repo           string
 	PeerKeyPath    string
