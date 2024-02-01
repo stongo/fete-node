@@ -5,18 +5,18 @@ A peer-to-peer network for implementing Threshold Signature Scheme (TSS), for EC
 
 ## Local Testing for Development
 
-1. `make all`
+1. `make install`
 2. Enabled logging by executing this in shell `export IPFS_LOGGING=debug`
 3. Setup multiple nodes, with different repos and ports
 ```
-go run ./... -port=4001 -repo="$HOME/.fetenode-0"
-go run ./... -port=4002 -repo="$HOME/.fetenode-1"
-go run ./... -port=4003 -repo="$HOME/.fetenode-2"
+go run ./... -port=4001 -http-port=5000 -repo="$HOME/.fetenode-0"
+go run ./... -port=4002 -http-port=5001 -repo="$HOME/.fetenode-1"
+go run ./... -port=4003 -http-port=5002 -repo="$HOME/.fetenode-2"
 ```
 4. Note the peer address of each peer, and write them to `$HOME/.peers.cfg`, one per line
 5. Restart all nodes, adding a flag for peer discovery
 ```
-go run ./... -port=4001 -repo="$HOME/.fetenode-0" -peer-list="$HOME/.peers.cfg"
+go run ./... -port=4001 -http-port=5000 -repo="$HOME/.fetenode-0" -peer-list="$HOME/.peers.cfg"
 ```
 6. Check JSON RPC endpoint
 ```
