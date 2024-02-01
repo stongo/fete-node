@@ -11,28 +11,28 @@ import (
 	"time"
 
 	libp2p "github.com/libp2p/go-libp2p"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/multiformats/go-multiaddr"
 
 	"github.com/stongo/fete-node/common"
+	"github.com/stongo/fete-node/partypubsub"
 	"github.com/stongo/fete-node/rpc"
 	"github.com/stongo/fete-node/signer"
 )
 
-const pid protocol.ID = "/grpc/1.0.0"
-
 func main() {
 	c := &config{}
 	log := common.Logger
-	flag.StringVar(&c.ListenAdddress, "address", "0.0.0.0", "The bootstrap node host listen address\n")
+	flag.StringVar(&c.ListenAdddress, "address", "0.0.0.0", "Node host listen address")
 	flag.IntVar(&c.ListenPort, "port", 4001, "Node listen port")
 	flag.IntVar(&c.HTTPListenPort, "http-port", 5000, "Node listen port")
 	flag.StringVar(&c.PeerKeyPath, "key-path", "", "Private key path")
 	flag.StringVar(&c.PeerList, "peer-list", "", "Path to file containing peer multiaddrs")
-	flag.StringVar(&c.Repo, "repo", "", "Sets a protocol id for stream headers")
+	flag.StringVar(&c.Repo, "repo", "", "Repository for application storage")
+	flag.StringVar(&c.PubSubTopic, "topic", "fete", "PubSub Topic for signing parties")
 	flag.Parse()
 
 	// Repo management
@@ -67,11 +67,28 @@ func main() {
 	}
 	addrs, err := peer.AddrInfoToP2pAddrs(&peerInfo)
 	if err != nil {
-		log.Fatal("Error create new libp2p host:", err)
+		log.Fatal("Error creating new libp2p host:", err)
 		os.Exit(1)
 	}
 	log.Info("PeerID:", addrs[0])
 	log.Info("Successfully created node")
+
+	// Create a pubsub service for exchanging messages with other signers
+	ctx, cancel := context.WithCancel(context.Background())
+	ps, err := pubsub.NewGossipSub(ctx, h)
+	if err != nil {
+		log.Fatal("Error creating pubsub service:", err)
+		os.Exit(1)
+	}
+	// join the TSS signing party
+	// @TODO: should there be a topic for keygen, message signing and key regeneration?
+	t := c.PubSubTopic
+	pps, err := partypubsub.JoinSignersPartyPS(ctx, ps, h.ID(), t)
+	if err != nil {
+		log.Fatal("Error joining pubsub topic %s: %s", t, err)
+		os.Exit(1)
+	}
+	log.Infof("Started PubSub TSS Signing topic: %s", t)
 
 	// Jsonrpc 2.0 server
 	// use this for message signing requests
@@ -86,8 +103,7 @@ func main() {
 	log.Info("Started HTTP JSONRPC 2.0 Server")
 
 	// Connect to known peers only
-	// p2p network is for tss signing party
-	ctx, cancel := context.WithCancel(context.Background())
+	// p2p network is for tss signing party on a private subnet
 	defer cancel()
 	pl, err := os.OpenFile(c.PeerList, os.O_RDONLY, os.ModePerm)
 	if err != nil {
@@ -127,6 +143,9 @@ func main() {
 	case err := <-errCh:
 		log.Fatal(err)
 		os.Exit(1)
+	// @TODO handle TSS messages
+	case <-pps.Messages:
+		log.Infof("received message from %s pubsub topic", t)
 	}
 }
 
@@ -267,4 +286,5 @@ type config struct {
 	Repo           string
 	PeerKeyPath    string
 	PeerList       string
+	PubSubTopic    string
 }
