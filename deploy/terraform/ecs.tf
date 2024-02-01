@@ -92,7 +92,7 @@ module "alb" {
         interval            = 30
         matcher             = "200"
         path                = "/rpc"
-        port                = "traffic-port"
+        port                = local.api_port 
         protocol            = "HTTP"
         timeout             = 5
         unhealthy_threshold = 2
