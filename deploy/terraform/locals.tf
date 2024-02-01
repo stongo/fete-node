@@ -8,7 +8,7 @@ locals {
   api_port = 5000
   p2p_port = 4001
 
-  image = "stongo/fete-node:master"
+  image = "stongo/fete-node:v1.0.0"
   tags = {
     Name = local.name
     Role = "demo"
