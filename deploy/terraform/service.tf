@@ -25,8 +25,7 @@ module "ecs_service" {
 
   container_definitions = {
     (local.container_name) = {
-      // @TODO: pin verion
-      image     = "stongo/fete-node:master"
+      image     = local.image 
       command   = ["fete-node", "-repo=/var/lib/fete-node"]
       cpu       = 2
       memory    = 2048
