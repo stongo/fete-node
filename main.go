@@ -139,13 +139,15 @@ func main() {
 		os.Exit(1)
 	}
 	log.Infof("Success creating new signer: %s", p.PartyID)
-	select {
-	case err := <-errCh:
-		log.Fatal(err)
-		os.Exit(1)
-	// @TODO handle TSS messages
-	case <-pps.Messages:
-		log.Infof("received message from %s pubsub topic", t)
+	for {
+		select {
+		case err := <-errCh:
+			log.Fatal(err)
+			os.Exit(1)
+		// @TODO handle TSS messages
+		case <-pps.Messages:
+			log.Infof("received message from %s pubsub topic", t)
+		}
 	}
 }
 
